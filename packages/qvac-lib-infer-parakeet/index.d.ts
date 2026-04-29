@@ -73,6 +73,13 @@ export interface ParakeetVadParams {
   max_speech_duration_s?: number;
   speech_pad_ms?: number;
   samples_overlap?: number;
+  /**
+   * Mid-segment partial decode cadence in milliseconds. While inside a still-
+   * open VAD speech segment, the recognizer is re-run every N ms of new
+   * audio and emits a transcript with isPartial=true. The next final commit
+   * (VAD endpoint) replaces it. 0 disables partials.
+   */
+  partial_decode_interval_ms?: number;
 }
 
 /**

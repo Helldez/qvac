@@ -304,14 +304,15 @@ export const parakeetPlugin = definePlugin({
       duplex: true,
 
       handler: async function* (request, inputStream) {
-        for await (const text of transcribeStream(
+        for await (const segment of transcribeStream(
           request.modelId,
           inputStream,
           request.prompt,
         )) {
           yield {
             type: "transcribeStream" as const,
-            text,
+            text: segment.text,
+            isPartial: segment.isPartial,
           };
         }
         yield {

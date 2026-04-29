@@ -16,6 +16,9 @@ const vadParamsSchema = z
     max_speech_duration_s: z.number().optional(),
     speech_pad_ms: z.number().optional(),
     samples_overlap: z.number().optional(),
+    // Parakeet-streaming only: cadence (ms) at which the in-progress segment
+    // is re-decoded and emitted as a partial. Whisper streaming ignores it.
+    partial_decode_interval_ms: z.number().optional(),
   })
   .optional();
 

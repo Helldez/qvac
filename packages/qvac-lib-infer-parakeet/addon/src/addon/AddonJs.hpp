@@ -73,6 +73,10 @@ struct JsParakeetOutputHandler
                     "id",
                     js::Number::create(
                         this->env_, static_cast<uint64_t>(output[i].id)));
+                jsTranscript.setProperty(
+                    this->env_,
+                    "isPartial",
+                    js::Boolean::create(this->env_, output[i].isPartial));
                 jsOutput.set(this->env_, i, jsTranscript);
               }
               return jsOutput;
@@ -200,6 +204,18 @@ startStreaming(js_env_t* env, js_callback_info_t* info) try {
   if (maybeSamplesOverlap.has_value()) {
     config.samplesOverlap =
         static_cast<float>(maybeSamplesOverlap.value().as<double>(env));
+  }
+
+  auto maybePartialDecodeMs =
+      configObj.getOptionalProperty<js::Number>(env, "partialDecodeIntervalMs");
+  if (maybePartialDecodeMs.has_value()) {
+    const auto ms = maybePartialDecodeMs.value().as<double>(env);
+    // Negative or zero from JS disables partial decoding entirely. Anything
+    // positive is converted to a sample count using the active sample rate.
+    config.partialDecodeIntervalSamples =
+        ms <= 0
+            ? 0
+            : static_cast<int>((ms / 1000.0) * config.sampleRate);
   }
 
   {

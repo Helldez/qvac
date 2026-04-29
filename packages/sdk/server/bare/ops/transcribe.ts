@@ -21,8 +21,13 @@ import { buildStreamResult } from "@/profiling/model-execution";
 const logger = getServerLogger();
 
 interface StreamingModelResponse {
-  iterate(): AsyncIterable<{ text: string }[]>;
-  await(): Promise<{ text: string }[]>;
+  iterate(): AsyncIterable<{ text: string; isPartial?: boolean }[]>;
+  await(): Promise<{ text: string; isPartial?: boolean }[]>;
+}
+
+export interface TranscribeStreamSegment {
+  text: string;
+  isPartial: boolean;
 }
 
 interface StreamableModel {
@@ -153,7 +158,7 @@ export async function* transcribeStream(
   modelId: string,
   audioInputStream: AsyncIterable<Buffer>,
   prompt?: string,
-): AsyncGenerator<string, void, void> {
+): AsyncGenerator<TranscribeStreamSegment, void, void> {
   const engineType = getEngineModelType(modelId);
   const silenceMarker = SILENCE_MARKERS[engineType] ?? "";
 
@@ -177,7 +182,7 @@ export async function* transcribeStream(
         if (!segment.text) continue;
         if (silenceMarker && segment.text.includes(silenceMarker)) continue;
         if (segment.text.trim()) {
-          yield segment.text;
+          yield { text: segment.text, isPartial: segment.isPartial === true };
         }
       }
     }

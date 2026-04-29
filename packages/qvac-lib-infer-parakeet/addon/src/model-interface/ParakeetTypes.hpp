@@ -17,11 +17,23 @@ struct Transcript {
   float start;
   float end;
   size_t id;
+  // True for in-progress streaming results that should REPLACE the previous
+  // partial in the consumer's UI. False (default) for committed segments
+  // that should APPEND. Streaming consumers are expected to keep the latest
+  // partial as a running tail and freeze it into the committed log only when
+  // a non-partial Transcript with overlapping audio range arrives.
+  bool isPartial;
 
-  Transcript() : toAppend{false}, start(-1.0F), end(-1.0F), id{0} {}
+  Transcript()
+      : toAppend{false}, start(-1.0F), end(-1.0F), id{0}, isPartial{false} {}
 
   explicit Transcript(std::string_view strView)
-      : text{strView}, toAppend{false}, start{-1.0F}, end{-1.0F}, id{0} {}
+      : text{strView},
+        toAppend{false},
+        start{-1.0F},
+        end{-1.0F},
+        id{0},
+        isPartial{false} {}
 };
 
 /**

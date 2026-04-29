@@ -64,6 +64,9 @@ export const transcribeStreamRequestSchema = transcribeBaseSchema.extend({
 
 export const transcribeStreamResponseSchema = transcriptionResultBase.extend({
   type: z.literal("transcribeStream"),
+  // True when the segment is an in-progress partial that will be replaced by
+  // the next final commit. Absent / false indicates a finalized segment.
+  isPartial: z.boolean().optional(),
 });
 
 export type TranscribeStreamRequest = z.infer<
@@ -78,11 +81,22 @@ export type TranscribeStreamClientParams = {
   prompt?: string;
 };
 
+/**
+ * Element yielded by an active streaming transcription session. `isPartial`
+ * is true while the recognizer is still revising the segment in-flight; the
+ * final commit for that audio range arrives as a non-partial element with
+ * the recognizer's authoritative text.
+ */
+export interface TranscribeStreamSegment {
+  text: string;
+  isPartial: boolean;
+}
+
 export interface TranscribeStreamSession {
   write(audioChunk: Buffer): void;
   end(): void;
   destroy(): void;
-  [Symbol.asyncIterator](): AsyncIterator<string>;
+  [Symbol.asyncIterator](): AsyncIterator<TranscribeStreamSegment>;
 }
 
 export type TranscribeStats = z.infer<typeof transcribeStatsSchema>;

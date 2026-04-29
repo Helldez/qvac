@@ -159,7 +159,7 @@ async function transcribeStreamDuplex(
 
 async function* parseResponseLines(
   responseStream: DuplexReadable,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ text: string; isPartial: boolean }> {
   let buf = "";
 
   for await (const chunk of responseStream) {
@@ -181,7 +181,9 @@ async function* parseResponseLines(
   }
 }
 
-function processLine(line: string): string | undefined | null {
+function processLine(
+  line: string,
+): { text: string; isPartial: boolean } | undefined | null {
   if (!line.trim()) return undefined;
 
   let parsed: unknown;
@@ -204,7 +206,9 @@ function processLine(line: string): string | undefined | null {
 
   if (response.error) throw new TranscriptionFailedError(response.error);
   if (response.done) return null;
-  if (response.text?.trim()) return response.text;
+  if (response.text?.trim()) {
+    return { text: response.text, isPartial: response.isPartial === true };
+  }
   return undefined;
 }
 

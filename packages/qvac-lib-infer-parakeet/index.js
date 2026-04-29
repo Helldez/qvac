@@ -316,7 +316,12 @@ class TranscriptionParakeet {
       minSpeechDurationMs: vadParams.min_speech_duration_ms || 250,
       maxSpeechDurationS: vadParams.max_speech_duration_s || 30,
       speechPadMs: vadParams.speech_pad_ms || 30,
-      samplesOverlap: vadParams.samples_overlap || 0.1
+      samplesOverlap: vadParams.samples_overlap || 0.1,
+      // Mid-segment partial decode cadence. Pass through verbatim — 0 from
+      // JS disables partials and falls back to legacy final-only behavior.
+      ...(vadParams.partial_decode_interval_ms !== undefined && {
+        partialDecodeIntervalMs: vadParams.partial_decode_interval_ms
+      })
     })
 
     const response = this._job.start()
@@ -336,7 +341,14 @@ class TranscriptionParakeet {
         if (chunk instanceof Float32Array) {
           audioData = chunk
         } else {
-          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
+          // Copy into a fresh Uint8Array so the underlying buffer starts at
+          // offset 0 — pear-rpc may hand us sliced Buffers whose byteOffset
+          // is odd, which makes `new Int16Array(chunk.buffer, chunk.byteOffset)`
+          // throw "start offset of Int16Array should be a multiple of 2".
+          const even = chunk.byteLength - (chunk.byteLength % 2)
+          const aligned = new Uint8Array(even)
+          aligned.set(new Uint8Array(chunk.buffer, chunk.byteOffset, even))
+          const int16Data = new Int16Array(aligned.buffer, 0, even / 2)
           audioData = new Float32Array(int16Data.length)
           for (let i = 0; i < int16Data.length; i++) {
             audioData[i] = int16Data[i] / 32768.0

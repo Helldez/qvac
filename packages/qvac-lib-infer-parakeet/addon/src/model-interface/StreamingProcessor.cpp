@@ -91,7 +91,8 @@ void StreamingProcessor::cancel() {
   }
 }
 
-void StreamingProcessor::processAudioRange(int startSample, int endSample) {
+void StreamingProcessor::processAudioRange(
+    int startSample, int endSample, bool isPartial) {
   const int len = endSample - startSample;
   if (len <= 0) {
     return;
@@ -99,11 +100,12 @@ void StreamingProcessor::processAudioRange(int startSample, int endSample) {
 
   QLOG(
       qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
-      "StreamingProcessor: processing " + std::to_string(len) + " samples (" +
+      std::string("StreamingProcessor: processing ") + std::to_string(len) +
+          " samples (" +
           std::to_string(
               static_cast<double>(len) /
               static_cast<double>(config_.sampleRate)) +
-          "s)");
+          "s)" + (isPartial ? " [partial]" : " [final]"));
 
   ParakeetModel::Input segment(
       processBuffer_.begin() + startSample,
@@ -113,6 +115,11 @@ void StreamingProcessor::processAudioRange(int startSample, int endSample) {
     model_.process(segment);
     auto transcripts = model_.takeOutput();
     if (!transcripts.empty()) {
+      // Tag every transcript in this batch so the consumer can decide
+      // whether to replace the running partial in the UI or commit it.
+      for (auto& t : transcripts) {
+        t.isPartial = isPartial;
+      }
       outputQueue_->queueResult(std::any(std::move(transcripts)));
     }
   } catch (const std::exception& e) {
@@ -229,7 +236,7 @@ void StreamingProcessor::processLoop() {
                     t1S * static_cast<float>(config_.sampleRate)),
                 bufferSize);
             if (endSample > startSample) {
-              processAudioRange(startSample, endSample);
+              processAudioRange(startSample, endSample, /*isPartial=*/false);
             }
           }
 
@@ -242,6 +249,53 @@ void StreamingProcessor::processLoop() {
           processBuffer_.erase(
               processBuffer_.begin(), processBuffer_.begin() + trimPoint);
           bufferSizeAtLastVadRun_ = 0;
+          // Buffer was trimmed up to the end of the last final segment; the
+          // partial cadence restarts on the fresh utterance that follows.
+          bufferSizeAtLastPartialDecode_ = 0;
+        }
+
+        // Mid-segment partial decode: when the most recent VAD segment is
+        // still open (its end + speechPad has not yet cleared the live
+        // buffer) and enough new audio has accumulated since our last
+        // partial pass, run Parakeet on the in-progress range and emit it
+        // tagged isPartial=true. Skipped on the terminating pass (done) so
+        // we don't compete with the natural end-of-stream final flush, and
+        // skipped when complete segments were just trimmed this pass — the
+        // remaining buffer is then a fresh utterance with stale VAD coords,
+        // which we'll re-segment cleanly on the next loop iteration.
+        if (!done && config_.partialDecodeIntervalSamples > 0 &&
+            !segments.empty() && lastComplete < 0) {
+          const int currentBufferSize =
+              static_cast<int>(processBuffer_.size());
+          const SileroVad::Segment& lastSeg = segments.back();
+          const float lastT0S =
+              static_cast<float>(lastSeg.t0Cs) * CS_TO_SEC;
+          const float lastT1S =
+              static_cast<float>(lastSeg.t1Cs) * CS_TO_SEC;
+          const float marginS =
+              static_cast<float>(config_.speechPadMs) / 1000.0F;
+          const float liveDurationS =
+              static_cast<float>(currentBufferSize) /
+              static_cast<float>(config_.sampleRate);
+          const bool segmentStillOpen = lastT1S + marginS >= liveDurationS;
+
+          if (segmentStillOpen) {
+            const int newAudioSinceLast =
+                currentBufferSize - bufferSizeAtLastPartialDecode_;
+            if (newAudioSinceLast >= config_.partialDecodeIntervalSamples) {
+              const int partialStart = std::max(
+                  0,
+                  static_cast<int>(
+                      lastT0S *
+                      static_cast<float>(config_.sampleRate)));
+              const int partialEnd = currentBufferSize;
+              if (partialEnd > partialStart) {
+                processAudioRange(
+                    partialStart, partialEnd, /*isPartial=*/true);
+                bufferSizeAtLastPartialDecode_ = currentBufferSize;
+              }
+            }
+          }
         }
       }
 
@@ -251,9 +305,11 @@ void StreamingProcessor::processLoop() {
             qvac_lib_inference_addon_cpp::logger::Priority::DEBUG,
             "StreamingProcessor: buffer overflow, force-processing " +
                 std::to_string(processBuffer_.size()) + " samples");
-        processAudioRange(0, static_cast<int>(processBuffer_.size()));
+        processAudioRange(
+            0, static_cast<int>(processBuffer_.size()), /*isPartial=*/false);
         processBuffer_.clear();
         bufferSizeAtLastVadRun_ = 0;
+        bufferSizeAtLastPartialDecode_ = 0;
       }
     }
 
@@ -271,7 +327,8 @@ void StreamingProcessor::processLoop() {
   }
 
   if (!processBuffer_.empty()) {
-    processAudioRange(0, static_cast<int>(processBuffer_.size()));
+    processAudioRange(
+        0, static_cast<int>(processBuffer_.size()), /*isPartial=*/false);
     processBuffer_.clear();
   }
 
