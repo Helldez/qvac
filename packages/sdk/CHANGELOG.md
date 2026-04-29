@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.10.0]
+
+📦 **NPM:** https://www.npmjs.com/package/@qvac/sdk/v/0.10.0
+
+This release brings the `transcribeStream` duplex op to Parakeet, reaching parity with Whisper for live transcription. Callers that pass a `vadModelSrc` get VAD-driven simulated streaming powered by Silero v5 inside the Parakeet addon, with optional mid-segment partial decoding for live-dictation UX. Whisper streaming is unchanged.
+
+---
+
+## ✨ Features
+
+### Parakeet streaming via `transcribeStream`
+
+The `transcribeStream` duplex op now accepts parakeet model IDs. The parakeet plugin handler routes the live PCM stream into `TranscriptionParakeet.runStreaming`, which drives the new native `StreamingProcessor` (Silero VAD + offline Parakeet recognizer). Final segments are emitted as `{text, isPartial: false}`; mid-segment partials (when enabled) as `{text, isPartial: true}`.
+
+```typescript
+import { transcribeStream } from "@qvac/sdk";
+
+const session = await transcribeStream({ modelId });
+for await (const chunk of micPcm) session.write(chunk);
+session.end();
+for await (const seg of session) {
+  if (seg.isPartial) replaceRunningTail(seg.text);
+  else commit(seg.text);
+}
+```
+
+### `vadModelSrc` and `vad_params` on the parakeet config
+
+```typescript
+loadModel({
+  modelType: "parakeet-transcription",
+  config: {
+    parakeetEncoderSrc: ENCODER,
+    parakeetDecoderSrc: DECODER,
+    parakeetPreprocessorSrc: PREPROCESSOR,
+    parakeetVocabSrc: VOCAB,
+    vadModelSrc: VAD_SILERO_5_1_2,
+    vad_params: {
+      threshold: 0.5,
+      min_silence_duration_ms: 500,
+      partial_decode_interval_ms: 1500,
+    },
+  },
+});
+```
+
+## 🔌 API Changes
+
+### `TranscribeStreamSession` iterator yields `{text, isPartial}`
+
+```typescript
+// Before
+for await (const { text } of session) commit(text);
+
+// After (parakeet partials supported)
+for await (const { text, isPartial } of session) {
+  if (isPartial) replaceTail(text);
+  else commit(text);
+}
+```
+
+## 📦 Models
+
+- No new model constants. Parakeet streaming consumes the existing `VAD_SILERO_5_1_2` constant (`silero_vad.onnx`, ~2 MB, MIT).
+
+## ⬆️ Dependencies
+
+- `@qvac/transcription-parakeet` peer range: `^0.3.1` → `^0.4.0`.
+
 ## [0.9.1]
 
 📦 **NPM:** https://www.npmjs.com/package/@qvac/sdk/v/0.9.1

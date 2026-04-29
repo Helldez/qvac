@@ -1,6 +1,6 @@
 {
   "name": "@qvac/sdk",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -183,7 +183,7 @@
     "@qvac/ocr-onnx": "^0.4.2",
     "@qvac/rag": "^0.4.4",
     "@qvac/registry-client": "^0.4.1",
-    "@qvac/transcription-parakeet": "^0.3.1",
+    "@qvac/transcription-parakeet": "^0.4.0",
     "@qvac/transcription-whispercpp": "^0.6.1",
     "@qvac/translation-nmtcpp": "^2.0.1",
     "@qvac/tts-onnx": "^0.8.2",

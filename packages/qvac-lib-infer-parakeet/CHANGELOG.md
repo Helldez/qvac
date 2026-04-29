@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+- Silero VAD v5 integration via a dedicated `Ort::Session` (`SileroVad`), with a `getSegments()` API modelled on whisper.cpp's `whisper_vad_segments_from_samples`. No new native dependency — reuses the ONNX Runtime already linked by the parakeet addon.
+- `StreamingProcessor` — VAD-driven simulated-streaming engine that segments live PCM in a background thread and feeds each detected segment to the offline Parakeet recognizer. Mirrors `qvac-lib-infer-whispercpp/.../StreamingProcessor.*`.
+- Native bindings `startStreaming` / `appendStreamingAudio` / `endStreaming` in `binding.cpp`, and a JS-level `TranscriptionParakeet.runStreaming(audioStream)` that drives them.
+- `ParakeetConfig.vadModelPath`, `TranscriptionParakeetFiles.vadModel`, and `ParakeetVadParams` (threshold, min/max speech & silence, pad, overlap) for tuning. `run()` ignores them — only `runStreaming()` consumes them.
+- Mid-segment partial decoding: while a VAD segment is still open, the recognizer is re-run every `partial_decode_interval_ms` (default 1.5 s) and emits a transcript with `isPartial=true`. The next final commit at the VAD endpoint replaces it. Setting the interval to 0 keeps the legacy final-only stream.
+- `ParakeetTypes::Transcript.isPartial` field, serialized through the addon output queue so JS consumers receive `{text, isPartial}` per segment.
+
+### Fixed
+- s16le PCM alignment in `_handleStreamingAudio`: PCM chunks delivered with an odd `byteOffset` (as pear-rpc may produce on Buffer slices) no longer crash with "start offset of Int16Array should be a multiple of 2". The chunk is now copied into an aligned buffer before reinterpretation.
+- Cancel race in `ParakeetInterface.cancel`: the JS side now waits for the native `JobEnded`/`Error` terminal frame via a `_onCancelComplete` promise before returning, so a subsequent `startStreaming()` no longer fails with "Streaming session already active".
+
 ## [0.3.2]
 
 ### Fixed
