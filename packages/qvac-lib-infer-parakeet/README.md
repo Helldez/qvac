@@ -10,6 +10,7 @@ A high-performance speech-to-text (STT) inference addon for the Bare runtime usi
 - **Fast Speech-to-Text** - Powered by NVIDIA's Parakeet ASR models via ONNX Runtime
 - **Multilingual Support** - Supports ~25 languages with automatic language detection (TDT model)
 - **Streaming Audio Processing** - Real-time transcription with end-of-utterance detection
+- **Live Streaming with Silero VAD** - Voice-activity-driven simulated streaming with mid-segment partial decoding (since v0.4.0)
 - **Speaker Diarization** - Optional speaker identification using Sortformer models
 - **Multiple Model Variants**:
   - **CTC** - English-only, fast transcription with punctuation/capitalization
@@ -137,6 +138,36 @@ bare examples/quickstart-ctc.js
 ```bash
 bare examples/quickstart-eou.js
 ```
+
+### Live Streaming with Silero VAD
+
+Voice-activity-driven simulated streaming. The addon runs Silero VAD v5 on the live PCM stream to detect speech segments and forwards each segment to the offline Parakeet recognizer. While a segment is still open, the recognizer is re-run at a configurable cadence and emits transcripts with `isPartial=true` for live dictation UX. The next final commit at the VAD endpoint replaces the partial.
+
+**Prerequisites:** `silero_vad.onnx` (Silero VAD v5) — same model used by the whisper streaming addon. No new native dependency: reuses the ONNX Runtime already linked by parakeet.
+
+```javascript
+const parakeet = require('@qvac/transcription-parakeet')
+
+const instance = parakeet.createInstance({ modelPath, modelType: 'tdt' /* ... */ }, onOutput)
+parakeet.loadWeights(instance, modelBuffer)
+parakeet.activate(instance)
+
+await parakeet.runStreaming(audioStream, {
+  vadModelPath: '/abs/path/to/silero_vad.onnx',
+  vad_params: {
+    threshold: 0.5,
+    min_silence_duration_ms: 500,
+    min_speech_duration_ms: 250,
+    max_speech_duration_s: 30,
+    speech_pad_ms: 30,
+    samples_overlap: 0.1,
+    partial_decode_interval_ms: 1500   // 0 = legacy final-only stream
+  }
+})
+// onOutput receives { text, isPartial, ... } per segment
+```
+
+See `test/integration/vad-streaming-simulation.test.js` for an end-to-end example covering finals, partials, and cancel re-entrancy.
 
 ### Speaker Diarization
 
@@ -266,6 +297,24 @@ Run transcription job.
   - `data` (ArrayBuffer): Audio data
   - `sampleRate` (number): Sample rate (e.g., 16000)
   - `channels` (number): Number of audio channels
+
+#### `runStreaming(audioStream, config)`
+Drive a VAD-based live streaming session. Silero VAD segments the incoming PCM and Parakeet transcribes each segment; mid-segment partials are emitted while a segment is still open if `partial_decode_interval_ms` is set.
+
+**Parameters:**
+- `audioStream`: an iterable/async iterable of PCM chunks (`Float32Array`, `ArrayBuffer`, or `Uint8Array` of s16le samples at the model sample rate)
+- `config` (Object):
+  - `vadModelPath` (string): absolute path to `silero_vad.onnx`
+  - `vad_params` (Object, optional):
+    - `threshold` (number): VAD activation threshold (default `0.5`)
+    - `min_silence_duration_ms` (number): default `500`
+    - `min_speech_duration_ms` (number): default `250`
+    - `max_speech_duration_s` (number): default `30`
+    - `speech_pad_ms` (number): default `30`
+    - `samples_overlap` (number): segment overlap fraction (default `0.1`)
+    - `partial_decode_interval_ms` (number): mid-segment partial cadence; `0` keeps final-only stream (default `0`)
+
+Each emitted transcript carries `{ text, isPartial }`; final commits at the VAD endpoint have `isPartial=false`.
 
 #### `cancelJob(handle)`
 Cancel the current running job.
