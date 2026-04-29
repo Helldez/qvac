@@ -229,6 +229,7 @@ if(BUILD_TESTING)
         parakeet_tests
         addon/tests/test_core.cpp
         addon/tests/AddonCppTest.cpp
+        addon/tests/StreamingProcessorTest.cpp
         addon/src/model-interface/parakeet/ParakeetModel.cpp
         addon/src/model-interface/parakeet/ParakeetConfig.cpp
     )
