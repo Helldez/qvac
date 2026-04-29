@@ -19,6 +19,8 @@ struct ParakeetConfig {
   std::string eouEncoderPath;
   std::string eouDecoderPath;
   std::string sortformerPath;
+  // Silero VAD (optional, only used by streaming path).
+  std::string vadModelPath;
   ModelType modelType = ModelType::TDT;
   int maxThreads = 4;
   bool useGPU = false;
@@ -43,6 +45,7 @@ struct ParakeetConfig {
            eouEncoderPath == other.eouEncoderPath &&
            eouDecoderPath == other.eouDecoderPath &&
            sortformerPath == other.sortformerPath &&
+           vadModelPath == other.vadModelPath &&
            modelType == other.modelType && maxThreads == other.maxThreads &&
            useGPU == other.useGPU && sampleRate == other.sampleRate &&
            channels == other.channels &&

@@ -92,6 +92,7 @@ export const parakeetRuntimeConfigSchema = z.object({
   channels: z.number().int().optional(),
   captionEnabled: z.boolean().optional(),
   timestampsEnabled: z.boolean().optional(),
+  vad_params: vadParamsSchema,
 });
 
 export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
@@ -105,6 +106,8 @@ export const parakeetConfigSchema = parakeetRuntimeConfigSchema.extend({
   parakeetTokenizerSrc: modelSrcInputSchema.optional(),
   // Sortformer source
   parakeetSortformerSrc: modelSrcInputSchema.optional(),
+  // Silero VAD source — required only for runStreaming / transcribeStream
+  vadModelSrc: modelSrcInputSchema.optional(),
 });
 
 export type ParakeetRuntimeConfig = z.infer<typeof parakeetRuntimeConfigSchema>;

@@ -84,6 +84,18 @@ public:
     output_.push_back(transcript);
   }
 
+  // Streaming helpers — mirror the WhisperModel surface used by the
+  // shared StreamingProcessor pattern.
+  Output takeOutput() {
+    Output result = std::move(output_);
+    output_.clear();
+    return result;
+  }
+
+  void prepareForStreaming() {
+    reset();
+  }
+
   void saveLoadParams(const ParakeetConfig& config) { cfg_ = config; }
 
   template <typename T, typename... Args>

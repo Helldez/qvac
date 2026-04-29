@@ -112,8 +112,11 @@ class TranscriptionParakeet {
       tokenizerPath: files.tokenizer,
       eouEncoderPath: files.eouEncoder,
       eouDecoderPath: files.eouDecoder,
-      sortformerPath: files.sortformer
+      sortformerPath: files.sortformer,
+      vadModelPath: files.vadModel
     }
+
+    this._files = this._config
 
     this.params = config.parakeetConfig || {}
     this._job = createJobHandler({ cancel: () => this.addon?.cancel() })
@@ -199,6 +202,7 @@ class TranscriptionParakeet {
     if (this._config.eouEncoderPath) configurationParams.eouEncoderPath = this._config.eouEncoderPath
     if (this._config.eouDecoderPath) configurationParams.eouDecoderPath = this._config.eouDecoderPath
     if (this._config.sortformerPath) configurationParams.sortformerPath = this._config.sortformerPath
+    if (this._config.vadModelPath) configurationParams.vadModelPath = this._config.vadModelPath
 
     return configurationParams
   }
@@ -225,6 +229,25 @@ class TranscriptionParakeet {
       return await this._withExclusiveRun(() => this._runInternal(input))
     }
     return await this._runInternal(input)
+  }
+
+  /**
+   * Simulated-streaming transcription driven by Silero VAD in the native
+   * addon. Mirrors the whisper `runStreaming` surface: the caller feeds
+   * PCM chunks via the returned response stream, each detected segment
+   * runs through the Parakeet recognizer, and per-segment transcripts are
+   * emitted on the response iterator.
+   *
+   * @param {AsyncIterable<Buffer>|Uint8Array|Float32Array} audioStream
+   * @returns {Promise<QvacResponse>}
+   */
+  async runStreaming (audioStream) {
+    if (this.exclusiveRun) {
+      return await this._withExclusiveRun(() =>
+        this._runInternal(audioStream, { streaming: true })
+      )
+    }
+    return await this._runInternal(audioStream, { streaming: true })
   }
 
   async _withExclusiveRun (fn) {
@@ -257,14 +280,80 @@ class TranscriptionParakeet {
    * @param {AsyncIterable<Buffer>} audioStream - Stream of audio data (16kHz mono, Float32 or s16le)
    * @returns {Promise<QvacResponse>} - Response object for tracking the transcription job
    */
-  async _runInternal (audioStream) {
+  async _runInternal (audioStream, opts = {}) {
+    const normalized = this._normalizeAudioStream(audioStream)
+
+    if (opts.streaming) {
+      return await this._runStreaming(normalized)
+    }
+
     const response = this._job.start()
 
-    this._handleAudioStream(this._normalizeAudioStream(audioStream)).catch((error) => {
+    this._handleAudioStream(normalized).catch((error) => {
       this._job.fail(error)
     })
 
     return response
+  }
+
+  /**
+   * Run VAD-driven streaming transcription. Requires vadModelPath to be set.
+   * @param {AsyncIterable<Buffer>} audioStream
+   * @returns {Promise<QvacResponse>}
+   * @private
+   */
+  async _runStreaming (audioStream) {
+    const vadModelPath = this._config.vadModelPath
+    if (!vadModelPath) {
+      throw new QvacErrorAddonParakeet(ERR_CODES.MODEL_NOT_FOUND, 'vadModelPath is required for streaming')
+    }
+
+    const vadParams = this.params?.vad_params || {}
+    this.addon.startStreaming({
+      vadModelPath,
+      vadThreshold: vadParams.threshold || 0.5,
+      minSilenceDurationMs: vadParams.min_silence_duration_ms || 500,
+      minSpeechDurationMs: vadParams.min_speech_duration_ms || 250,
+      maxSpeechDurationS: vadParams.max_speech_duration_s || 30,
+      speechPadMs: vadParams.speech_pad_ms || 30,
+      samplesOverlap: vadParams.samples_overlap || 0.1
+    })
+
+    const response = this._job.start()
+
+    this._handleStreamingAudio(audioStream).catch((error) => {
+      this._job.fail(error)
+    })
+
+    return response
+  }
+
+  async _handleStreamingAudio (audioStream) {
+    this.logger.debug('Start handling streaming audio')
+    try {
+      for await (const chunk of audioStream) {
+        let audioData
+        if (chunk instanceof Float32Array) {
+          audioData = chunk
+        } else {
+          const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
+          audioData = new Float32Array(int16Data.length)
+          for (let i = 0; i < int16Data.length; i++) {
+            audioData[i] = int16Data[i] / 32768.0
+          }
+        }
+        this.addon.appendStreamingAudio({ input: audioData })
+      }
+    } finally {
+      // Always close the native streaming session — leaking one blocks the
+      // next startStreaming() with "Streaming session already active".
+      this.logger.debug('Ending streaming session')
+      try {
+        this.addon.endStreaming()
+      } catch (err) {
+        this.logger.warn('endStreaming failed', err)
+      }
+    }
   }
 
   /**

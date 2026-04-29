@@ -7,8 +7,11 @@ import TranscriptionParakeet, {
 import {
   definePlugin,
   defineHandler,
+  defineDuplexHandler,
   transcribeRequestSchema,
   transcribeResponseSchema,
+  transcribeStreamRequestSchema,
+  transcribeStreamResponseSchema,
   ModelType,
   parakeetConfigSchema,
   ADDON_PARAKEET,
@@ -25,7 +28,7 @@ import {
   ParakeetArtifactsRequiredError,
 } from "@/utils/errors-server";
 import FilesystemDL from "@qvac/dl-filesystem";
-import { transcribe } from "@/server/bare/ops/transcribe";
+import { transcribe, transcribeStream } from "@/server/bare/ops/transcribe";
 import { attachModelExecutionMs } from "@/profiling/model-execution";
 
 type ParakeetModelConfig = {
@@ -48,6 +51,16 @@ type ParakeetModelConfig = {
   parakeetTokenizerSrc?: ModelSrcInput;
   // Sortformer
   parakeetSortformerSrc?: ModelSrcInput;
+  // Silero VAD — streaming only
+  vadModelSrc?: ModelSrcInput;
+  vad_params?: {
+    threshold?: number;
+    min_silence_duration_ms?: number;
+    min_speech_duration_ms?: number;
+    max_speech_duration_s?: number;
+    speech_pad_ms?: number;
+    samples_overlap?: number;
+  };
 };
 
 
@@ -189,6 +202,7 @@ function createParakeetModel(
       channels: config.channels,
       captionEnabled: config.captionEnabled,
       timestampsEnabled: config.timestampsEnabled,
+      ...(config.vad_params && { vad_params: config.vad_params }),
     } as ParakeetConfig,
   };
 
@@ -214,9 +228,27 @@ export const parakeetPlugin = definePlugin({
   ): Promise<ResolveResult<ParakeetModelConfig>> {
     const modelType = cfg.modelType ?? "tdt";
 
-    if (modelType === "ctc") return resolveCtcConfig(cfg, ctx);
-    if (modelType === "sortformer") return resolveSortformerConfig(cfg, ctx);
-    return resolveTdtConfig(cfg, ctx);
+    let base: ResolveResult<ParakeetModelConfig>;
+    if (modelType === "ctc") base = await resolveCtcConfig(cfg, ctx);
+    else if (modelType === "sortformer")
+      base = await resolveSortformerConfig(cfg, ctx);
+    else base = await resolveTdtConfig(cfg, ctx);
+
+    // Silero VAD is orthogonal to the recognizer variant: resolve it once
+    // and attach the path to the artifacts so createParakeetModel can pass
+    // it through to the native addon.
+    if (cfg.vadModelSrc) {
+      const vadModelPath = await ctx.resolveModelPath(cfg.vadModelSrc);
+      base = {
+        ...base,
+        artifacts: {
+          ...(base.artifacts ?? {}),
+          ...(vadModelPath !== undefined && { vadModel: vadModelPath }),
+        },
+      };
+    }
+
+    return base;
   },
 
   createModel(params: CreateModelParams): PluginModelResult {
@@ -262,6 +294,31 @@ export const parakeetPlugin = definePlugin({
         } finally {
           await stream.return?.(undefined as never);
         }
+      },
+    }),
+
+    transcribeStream: defineDuplexHandler({
+      requestSchema: transcribeStreamRequestSchema,
+      responseSchema: transcribeStreamResponseSchema,
+      streaming: true,
+      duplex: true,
+
+      handler: async function* (request, inputStream) {
+        for await (const text of transcribeStream(
+          request.modelId,
+          inputStream,
+          request.prompt,
+        )) {
+          yield {
+            type: "transcribeStream" as const,
+            text,
+          };
+        }
+        yield {
+          type: "transcribeStream" as const,
+          text: "",
+          done: true,
+        };
       },
     }),
   },

@@ -130,6 +130,11 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
   if (sortformerPathOpt.has_value()) {
     config.sortformerPath = sortformerPathOpt.value().as<std::string>(env);
   }
+  auto vadModelPathOpt =
+      jsObject.getOptionalProperty<js::String>(env, "vadModelPath");
+  if (vadModelPathOpt.has_value()) {
+    config.vadModelPath = vadModelPathOpt.value().as<std::string>(env);
+  }
 
   auto innerConfigOpt = jsObject.getOptionalProperty<js::Object>(env, "config");
   if (innerConfigOpt.has_value()) {

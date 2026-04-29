@@ -28,6 +28,8 @@ export interface ParakeetConfig {
   timestampsEnabled?: boolean;
   /** Random seed for reproducibility (-1 for random, default: -1) */
   seed?: number;
+  /** Silero VAD tuning for runStreaming(). Ignored by run(). */
+  vad_params?: ParakeetVadParams;
 }
 
 /**
@@ -56,6 +58,21 @@ export interface TranscriptionParakeetFiles {
   eouDecoder?: string;
   /** Absolute path to sortformer.onnx */
   sortformer?: string;
+  /** Absolute path to silero_vad.onnx — required by runStreaming() */
+  vadModel?: string;
+}
+
+/**
+ * Silero VAD tuning parameters for streaming mode. Field names match
+ * whisper's vad_params for drop-in compatibility with SDK callers.
+ */
+export interface ParakeetVadParams {
+  threshold?: number;
+  min_silence_duration_ms?: number;
+  min_speech_duration_ms?: number;
+  max_speech_duration_s?: number;
+  speech_pad_ms?: number;
+  samples_overlap?: number;
 }
 
 /**
@@ -129,6 +146,20 @@ export interface Addon {
   stop(): Promise<void>;
   reload(config: ParakeetConfig): Promise<void>;
   destroyInstance(): Promise<void>;
+  /** Open a Silero-VAD driven streaming session. */
+  startStreaming(config: {
+    vadModelPath: string;
+    vadThreshold?: number;
+    minSilenceDurationMs?: number;
+    minSpeechDurationMs?: number;
+    maxSpeechDurationS?: number;
+    speechPadMs?: number;
+    samplesOverlap?: number;
+  }): void;
+  /** Push a Float32Array of PCM samples into the active streaming session. */
+  appendStreamingAudio(data: { input: Float32Array }): boolean;
+  /** Close the active streaming session and flush any buffered audio. */
+  endStreaming(): boolean;
 }
 
 /**
@@ -168,6 +199,16 @@ declare class TranscriptionParakeet {
    * @returns A QvacResponse representing the transcription job
    */
   run(
+    audioStream: AsyncIterable<Buffer>
+  ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
+
+  /**
+   * Run a live streaming transcription session backed by Silero VAD.
+   * Requires `files.vadModel` at construction time. The caller drives the
+   * PCM feed via the AsyncIterable and each VAD-detected segment is
+   * transcribed by the Parakeet offline recognizer.
+   */
+  runStreaming(
     audioStream: AsyncIterable<Buffer>
   ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>;
 

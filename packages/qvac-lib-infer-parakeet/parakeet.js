@@ -267,6 +267,58 @@ class ParakeetInterface {
   }
 
   /**
+   * Start a live streaming transcription session.
+   *
+   * Silero VAD drives endpointing in the native addon (StreamingProcessor);
+   * each detected segment is forwarded to the Parakeet offline recognizer
+   * and its transcript is emitted via the normal Output callback, matching
+   * the whisper streaming surface so the SDK plugin layer stays symmetric.
+   *
+   * @param {Object} config
+   * @param {string} config.vadModelPath - absolute path to silero_vad.onnx
+   * @param {number} [config.vadThreshold=0.5]
+   * @param {number} [config.minSilenceDurationMs=500]
+   * @param {number} [config.minSpeechDurationMs=250]
+   * @param {number} [config.maxSpeechDurationS=30]
+   * @param {number} [config.speechPadMs=30]
+   * @param {number} [config.samplesOverlap=0.1]
+   */
+  startStreaming (config = {}) {
+    const currentJobId = this._nextJobId
+    const accepted = this._binding.startStreaming(this._handle, {
+      ...config,
+      jobId: currentJobId
+    })
+    if (!accepted) {
+      throw new Error('Failed to start streaming session')
+    }
+    this._activeJobId = currentJobId
+    this._nextJobId = nextSafeId(this._nextJobId)
+    this._setState(state.PROCESSING)
+  }
+
+  /**
+   * Append a PCM chunk to an active streaming session.
+   * @param {{ input: Float32Array|ArrayBuffer|Uint8Array }} data
+   * @returns {boolean} false when the session rejected the chunk (e.g. empty)
+   */
+  appendStreamingAudio (data) {
+    const normalized = this._normalizeAudioInput(data?.input ?? data?.data)
+    return this._binding.appendStreamingAudio(this._handle, {
+      type: 'audio',
+      input: normalized
+    })
+  }
+
+  /**
+   * Close the active streaming session. Any buffered audio is drained
+   * through the VAD + recognizer before the job ends.
+   */
+  endStreaming () {
+    return this._binding.endStreaming(this._handle)
+  }
+
+  /**
    * Get current model status
    * @returns {Promise<string>} - 'loading', 'listening', 'processing', 'idle', 'paused', 'stopped'
    */
