@@ -213,9 +213,25 @@ std::vector<SileroVad::Segment> SileroVad::getSegments(
     }
   }
 
-  // Trailing speech that never closed — leave open for the next invocation
-  // unless the caller is at end of stream (handled at the
-  // StreamingProcessor level via the "force-process final buffer" path).
+  // Trailing speech that never closed: emit a *preliminary* (open) segment
+  // covering [speechStartFrame, numWindows-1] so the StreamingProcessor's
+  // mid-segment partial-decode branch (patch 0002) has a non-empty queue
+  // and a `lastT1S` that satisfies `segmentStillOpen`. The loop above will
+  // emit a *closed* segment in its place on the pass where silence is
+  // finally observed; that closed segment is what triggers the final
+  // commit + buffer trim.
+  //
+  // Without this, getSegments() returns an empty vector during ongoing
+  // speech, the partial branch's `!segments.empty()` check is never true,
+  // and the recognizer is run only at VAD endpoints — i.e. never as a
+  // partial. End-of-stream (force-process final buffer) is unaffected
+  // because StreamingProcessor handles that path on the JS side via
+  // endStreaming() and does not consult this segment list.
+  if (inSpeech) {
+    const int speechEndFrame = std::max(speechStartFrame + 1, numWindows - 1);
+    segments.push_back(
+        {framesToCs(speechStartFrame), framesToCs(speechEndFrame)});
+  }
   return segments;
 }
 
