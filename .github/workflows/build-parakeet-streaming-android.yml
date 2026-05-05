@@ -72,14 +72,13 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install
 
-      - name: bare-make generate (android-arm64)
-        # Use bare-make defaults; current paparam in bare-make rejects
-        # -D passthroughs, so the STL choice falls back to NDK r29's
-        # default (c++_shared), which is standard for modern Android
-        # native modules and matches what bare runtime hosts expect.
+      - name: bare-make generate (android-arm64, c++_shared)
+        # Matches upstream tetherto/qvac CI flags. The `-D <var>=<value>`
+        # form (space, no `--` separator) is what bare-make's paparam
+        # CLI defines for `--define|-D`.
         working-directory: ${{ env.WORKDIR }}
         run: |
-          bare-make generate --platform android --arch arm64
+          bare-make generate --platform android --arch arm64 -D ANDROID_STL=c++_shared
 
       - name: bare-make build
         working-directory: ${{ env.WORKDIR }}
