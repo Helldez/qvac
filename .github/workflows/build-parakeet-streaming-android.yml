@@ -72,10 +72,11 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install
 
-      - name: bare-make generate (android-arm64, c++_static)
+      - name: bare-make generate (android-arm64, c++_shared)
+        # Matches upstream tetherto/qvac CI flags for parakeet android-arm64.
         working-directory: ${{ env.WORKDIR }}
         run: |
-          bare-make generate --platform android --arch arm64 -- -D ANDROID_STL=c++_static
+          bare-make generate --platform android --arch arm64 -DANDROID_STL=c++_shared
 
       - name: bare-make build
         working-directory: ${{ env.WORKDIR }}
