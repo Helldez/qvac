@@ -1,0 +1,142 @@
+# Self-contained Android prebuild for the parakeet streaming branch.
+#
+# This workflow does not depend on tetherto's internal infra
+# (PAT_TOKEN, AWS OIDC, vcpkg cache S3, custom composite actions).
+# It produces a single artifact: the patched android-arm64 .bare,
+# verified to expose the streaming binding symbols.
+#
+# Triggers:
+#   * workflow_dispatch  - manual run (any branch)
+#   * push to tags `parakeet-streaming-*` - publish a GitHub Release
+#     with the .bare and a SHA256SUMS file attached.
+name: "Build parakeet streaming (android-arm64)"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "parakeet-streaming-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      WORKDIR: packages/qvac-lib-infer-parakeet
+      VCPKG_BUILD_TYPE: release
+      ANDROID_NATIVE_API_LEVEL: "34"
+    steps:
+      - name: Maximize build space
+        run: |
+          sudo docker image prune --all --force || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/ghc /usr/share/dotnet || true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select NDK
+        run: |
+          echo "ANDROID_NDK=$ANDROID_NDK_LATEST_HOME"      >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_TOOLCHAIN_ROOT=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install bare tooling
+        run: npm install -g bare-runtime bare-make
+
+      - name: Update apt sources and toolchain
+        run: |
+          sudo apt-get update
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          sudo chmod 644 /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19 all
+          sudo apt-get install -y libxi-dev libxtst-dev libxrandr-dev pkg-config libx11-dev libxcb1-dev libxkbcommon-dev
+
+      - name: Bootstrap vcpkg
+        run: |
+          cd ..
+          git clone --branch 2025.12.12 --single-branch --depth 1 https://github.com/microsoft/vcpkg.git
+          cd vcpkg && ./bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$(pwd)" >> "$GITHUB_ENV"
+
+      - name: Install npm dependencies
+        working-directory: ${{ env.WORKDIR }}
+        run: npm install
+
+      - name: bare-make generate (android-arm64, c++_static)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          bare-make generate --platform android --arch arm64 -- -D ANDROID_STL=c++_static
+
+      - name: bare-make build
+        working-directory: ${{ env.WORKDIR }}
+        run: bare-make build
+
+      - name: bare-make install
+        working-directory: ${{ env.WORKDIR }}
+        run: bare-make install
+
+      - name: Strip debug symbols
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          find prebuilds -name "*.bare" -exec "$ANDROID_TOOLCHAIN_ROOT/bin/llvm-strip" --strip-debug {} \;
+
+      - name: Verify streaming binding symbols are exported
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          set -e
+          BARE="prebuilds/android-arm64/qvac__transcription-parakeet.bare"
+          if [ ! -f "$BARE" ]; then
+            echo "::error::Expected prebuild not found: $BARE"
+            exit 1
+          fi
+          MISSING=0
+          for sym in startStreaming appendStreamingAudio endStreaming SileroVad StreamingProcessor; do
+            if strings "$BARE" | grep -q -F "$sym"; then
+              echo "ok: $sym"
+            else
+              echo "::error::missing symbol: $sym"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            echo "::error::Streaming binding smoke test failed."
+            exit 1
+          fi
+          ls -la "$BARE"
+          sha256sum "$BARE"
+
+      - name: Stage release assets
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          mkdir -p ../../dist
+          cp prebuilds/android-arm64/qvac__transcription-parakeet.bare \
+             ../../dist/qvac__transcription-parakeet-android-arm64.bare
+          cd ../../dist
+          sha256sum qvac__transcription-parakeet-android-arm64.bare > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: parakeet-streaming-android-arm64
+          path: dist/
+          retention-days: 30
+
+      - name: Attach to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/parakeet-streaming-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/qvac__transcription-parakeet-android-arm64.bare
+            dist/SHA256SUMS
+          generate_release_notes: true
